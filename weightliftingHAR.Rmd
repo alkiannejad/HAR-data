@@ -1,0 +1,241 @@
+---
+title: "‘I Want to Pump You Up [1]’ Correctly"
+author: "Amanda Kiannejad"
+date: "7/11/2021"
+output: html_document
+---
+Executive Summary: Multiple devices have been designed to track how much exercise a person does, however, some exercises are only effective if does correctly, quality versus quantity. The Human Activity Recognition (HAR)[study]( http://web.archive.org/web/20161224072740/http:/groupware.les.inf.puc-rio.br/har) design demonstrated that by attaching accelerometers and gyroscopes on the bodies of the “training portion” participates that the quality could be measured. These data points and be used as a training data could determine the efficacy of the test subjects with an`  R^2 =0.99 ` for the test subjects’ barbell lifts. 
+
+Introduction: 
+Exercise trackers have become exceedingly popular with sports enthusiasts in since their advent.  However, the effectiveness of exercising is as much about quantity as it is quality. Weightlifting is a prime example of how proper technique can affect the quality of the exercise, therefore, strength and muscle mass change according to that technique.
+
+Six young health participants were asked to perform one set of 10 repetitions of the Unilateral Dumbbell Biceps Curl in five different fashions: exactly according to the specification (Class A), throwing the elbows to the front (Class B), lifting the dumbbell only halfway (Class C), lowering the dumbbell only halfway (Class D) and throwing the hips to the front (Class E).
+
+Read more: http:/groupware.les.inf.puc-rio.br/har#ixzz4Tjs3pdu3[4]
+
+In the study sensor were attached to the barbell, forearm, wrist, arm, and hips. Change in position and acceleration were  measured. Change in position from the x,y and z planes and were further categorized into yaw, pitch, and roll. 
+   Yaw is a Euler angle that moves counterclockwise from that angle `alpha` along the z coordinate or the vertical axis, this is twist or oscillation.
+   Pitch is a Euler angle that moves counterclockwise from the angle `beta` along the x-coordinate or lateral axis this is considered up and down or nodding of a body.
+   Roll is a Euler angle that moves counterclockwise from the angle `gamma` along the y-coordinate it rotates around its longitudinal axis[3],[4]
+The classification scheme (classe)  was based on these three principles. And was the factor that determined the quality of the exercise. From the 
+
+ Using the study design above, where the classe variable was set to factor and levels, then a training and quiz (this was 20% of the original training data) was partitioned .  Out of the 160 variables only those whose names started with “roll_”, “pitch_”, and “yaw_” were selected because of their usefulness in determining positioning of a body.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, cache=TRUE}
+library(MASS)
+library(mda)
+library(caret)
+library(xgboost)
+library(kernlab)
+library(tidyverse)
+library(ggplot2)
+library(FactoMineR)
+library(factoextra)
+library(AppliedPredictiveModeling)
+library(Hmisc)
+#install.packages("rlist")
+library(rlist)
+```
+
+```{r cache=TRUE}
+trainingURL <-"https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+testingURL <-"https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+
+weightLifting <-read.csv(trainingURL)
+test.data <-read.csv(testingURL)
+weightLiftingTraining<-weightLifting%>%
+  select( 
+    grep("^roll_", colnames(weightLifting)),
+    grep("^pitch_", colnames(weightLifting)),
+    grep("^yaw_", colnames(weightLifting)),
+  
+    classe
+  )#%>%
+ # select(roll_dumbbell, pitch_arm)
+
+test.data<-test.data%>%
+  select(
+          grep("^roll_", colnames(weightLifting)),
+           grep("^pitch_", colnames(weightLifting)),
+           grep("^yaw_", colnames(weightLifting)),
+     )
+
+```
+Then a principle component analysis was run on these variables. The outputs of the Scree plot and the  Variables plot are in figures 1 and 2.  
+
+
+```{r cache=TRUE} 
+
+res.pca <-PCA(weightLiftingTraining[-13], scale.unit=TRUE, ncp=9, graph=FALSE)
+
+fviz_eig(res.pca, addlabels = TRUE, ylim = c(0, 50))
+
+```
+
+The scree plot shows that the first two PC only account for ~40% of the total variation of the data.
+```{r cache=TRUE}
+
+
+f <-res.pca[[1]][[2]]
+
+fviz_pca_var(res.pca, col.var = "cos2",
+             gradient.cols = c("#00AFBB", "#E7B800", "#FC4E07"),
+             repel = TRUE # Avoid text overlapping
+)
+
+
+
+```
+
+
+There is also a lot of overlap in the data and separation may not be easy. The   plot shows that a few variables(orange) are highly correlated with the outcome. This is demonstrated in their proximity to the circumference of the circle.
+But none of them are greater than 60% and having the first two principle components not able to "explain" the most of the variation in the data, principle component analysis is not a good match. Next we will transform and center the data and use the machine learning algorithm run was a linear discriminant analysis to determine whether good separation was possible. 
+
+
+```{r cache=TRUE}
+############### too much overlap give for poorer accuracy
+
+
+training.samples <- weightLiftingTraining$classe %>%
+  createDataPartition(p = 0.75, list = FALSE)
+train.data <- weightLiftingTraining[training.samples, ]
+quiz.data <- weightLiftingTraining[-training.samples, ]
+
+
+preproccessTraining<-
+  train.data%>%
+  preProcess(method=c("center", "scale"))
+
+train.transformed <-preproccessTraining%>%
+     predict(train.data)
+quiz.transformed <-preproccessTraining%>%
+     predict(quiz.data)
+
+
+
+
+model <-lda(classe ~., data=train.transformed)
+model
+
+# Make predictions
+predictions <- model %>% predict(quiz.transformed)
+# Model accuracy
+mean(predictions$class==quiz.transformed$class)
+
+
+
+
+
+
+```
+Unfortunately, this model was only accurate 43% of the time.
+
+
+```{r}
+library(nnet)
+
+
+# Fit the model
+model <- nnet::multinom(classe ~., data = train.data)
+# Summarize the model
+summary(model)
+# Make predictions
+predicted.classes.nnet <- model %>% predict(quiz.data)
+head(predicted.classes.nnet)
+# Model accuracy
+mean(predicted.classes.nnet == quiz.data$classe)
+
+
+```
+Next, an multideminsional analysis and multinomial  neural net were run. While the MDA model was better the forward feeding multinomial nnet was not. 
+
+ 
+Because standard methods were not improving the outcome more thought had to be put into the modeling. If more variables were added this could be problematic with overfitting the training model.  As we can see from the blue arrows in the variable plot in Figure 1 there are quite a few weak predictors. In order to leverage these as better variables we can use a boosting method. The one used ere is  (xbgBoost); then, it applied to the training model. 
+```{r cache=TRUE}
+library(randomForest)
+modelxb <- train(classe ~., data = train.data, method = "xgbTree",
+               trControl = trainControl("CV", number = 10))
+# Make predictions
+predicted.classes.xb <- modelxb %>% predict(quiz.data)
+
+predicted <-predict(modelxb, quiz.data)
+# Model n accuracy
+mean(predicted.classes.xb==quiz.data$classe)
+
+```
+Here we see a drastic improvement in the training model ability to predict the test set. 
+
+
+```{r cache=TRUE}
+levels(quiz.data$classe) <-c("A","B","C","D","E")
+
+
+
+actual <-as.factor(quiz.data$classe)
+levels(predicted.classes.xb) <-c("A","B","C","D","E")
+
+
+
+```
+
+
+
+```{r cache=TRUE}
+predicted<-predicted.classes.xb
+confusionMatrix( actual,predicted, positive="1")
+```
+
+
+```{r cache=TRUE, message=FALSE, warning=FALSE}
+library(ggplot2)     
+library(grid)
+library(gridExtra)           
+library(likert)
+
+cm <- confusionMatrix(actual,predicted) #create a confusion matrix
+cm_d <- as.data.frame(cm$table) # extract the confusion matrix values as data.frame
+cm_st <-data.frame(cm$overall) # confusion matrix statistics as data.frame
+cm_st$cm.overall <- round(cm_st$cm.overall,2) # round the values
+cm_d$diag <- cm_d$Prediction == cm_d$Reference # Get the Diagonal
+cm_d$ndiag <- cm_d$Prediction != cm_d$Reference # Off Diagonal     
+cm_d[cm_d == 0] <- NA # Replace 0 with NA for white tiles
+cm_d$Reference <-  reverse.levels(cm_d$Reference) # diagonal starts at top left
+cm_d$ref_freq <- cm_d$Freq * ifelse(is.na(cm_d$diag),-1,1)
+
+
+plt1 <-  ggplot(data = cm_d, aes(x = Prediction , y =  Reference, fill = Freq))+
+  scale_x_discrete(position = "top") +
+  geom_tile( data = cm_d,aes(fill = ref_freq)) +
+  scale_fill_gradient2(guide = FALSE ,low="#CCFFFF",high="#1E90FF",
+                       midpoint = 0,na.value = '#F8F8FF') +
+  geom_text(aes(label = Freq), color = 'black', size = 3)+
+  theme_bw() +
+  theme(
+        legend.position = "none",
+        panel.border = element_blank(),
+        plot.background = element_blank(),
+        axis.line = element_blank(),
+  )
+plt2 <-  tableGrob(cm_st)
+
+
+grid.arrange(plt1, plt2, nrow = 1, ncol = 2, 
+             top=textGrob("Confusion Matrix",gp=gpar(fontsize=25,font=1)))
+
+
+```
+
+In conclusion, Using the correct Machine learning algorithm for loosely correlated variables, "pumps" them up. HAR devices can determine with a great deal of accuracy the effectiveness of barbell fits.  
+
+
+
+References
+
+
+[1] Carvey D. and Nelson, K, (1987), Hans and Franz, Saturday Night Live, NBC.
+
+[2] LaValle, S.(March, 2012) Determining yaw, pitch, and roll from a rotation matrix, http://planning.cs.uiuc.edu/node103.html
+
+[3]Euler Angles.Wikipedia https://en.wikipedia.org/wiki/Euler_angles
+
+[4] http://web.archive.org/web/20161224072740/http:/groupware.les.inf.puc-rio.br/har)
